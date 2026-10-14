@@ -1,0 +1,14 @@
+{
+  "ExpandedNodes": [
+    "",
+    "\\backend",
+    "\\backend\\app",
+    "\\data",
+    "\\data\\faces",
+    "\\data\\model",
+    "\\frontend",
+    "\\frontend\\dist"
+  ],
+  "SelectedNode": "\\backend\\app\\face_service.py",
+  "PreviewInSolutionExplorer": false
+}

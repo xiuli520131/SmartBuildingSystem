@@ -1,0 +1,9 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.7
+python-multipart>=0.0.9
+pyserial>=3.5
+# OpenCV 5.0 的 pip wheel 不再捆绑 Haar 级联文件，固定 4.x 线（自带 haarcascades + cv2.face）
+opencv-contrib-python>=4.10,<4.13
+numpy>=1.26
+python-dotenv>=1.0

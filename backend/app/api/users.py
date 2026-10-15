@@ -73,6 +73,7 @@ def delete_user(user_id: int) -> None:
     removed = app_state.face.delete_user_samples(user_id)
     db.execute("DELETE FROM permissions WHERE user_id=?", (user_id,))
     db.execute("DELETE FROM users WHERE id=?", (user_id,))
+    db.execute("DELETE FROM edge_thresholds")
     if removed:
         app_state.face.retrain()
 

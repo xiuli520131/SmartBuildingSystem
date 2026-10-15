@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { api } from '../api'
+import { onMounted, onUnmounted, ref } from 'vue'
+import { api, store } from '../api'
 import type { Alert } from '../types'
 
 const alerts = ref<Alert[]>([])
 const showResolved = ref(false)
 const loading = ref(false)
+const error = ref('')
+let timer: number | undefined
+let generation = 0
 
 const TYPE_LABEL: Record<string, string> = {
   unknown_person: '未知人员',
@@ -23,26 +26,54 @@ const LEVEL_CLASS: Record<string, string> = {
 }
 
 async function load() {
+  const requestGeneration = ++generation
   loading.value = true
   try {
-    alerts.value = await api.alerts({ limit: 200, resolved: showResolved.value || undefined })
+    const result = await api.alerts({ limit: 200, resolved: showResolved.value ? undefined : false })
+    if (requestGeneration === generation) {
+      alerts.value = result
+      error.value = ''
+    }
+  } catch (cause) {
+    if (requestGeneration === generation) error.value = cause instanceof Error ? cause.message : String(cause)
   } finally {
-    loading.value = false
+    if (requestGeneration === generation) loading.value = false
   }
 }
 
 async function resolve(a: Alert) {
-  await api.resolveAlert(a.id)
-  await load()
+  try {
+    await api.resolveAlert(a.id)
+    await load()
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : String(cause)
+  }
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  timer = window.setInterval(() => { if (!loading.value) load() }, 5000)
+})
+onUnmounted(() => {
+  ++generation
+  if (timer) window.clearInterval(timer)
+})
 </script>
 
 <template>
   <div class="page">
     <div class="panel">
       <h2>告警中心 <span class="sub">未知人员 / 连续失败 / 设备离线 / 串口错误 / 执行未确认</span></h2>
+      <div class="result-banner" style="margin: 0 0 16px">
+        <p v-if="store.status">
+          当前连接：
+          <span class="badge" :class="store.status.online ? 'green' : 'amber'">
+            {{ store.status.mode === 'serial' ? store.status.port : '模拟模式' }} · {{ store.status.online ? '在线' : '离线' }}
+          </span>
+          <span class="muted" style="margin-left: 12px">最后心跳：{{ store.status.last_heartbeat || '—' }}</span>
+        </p>
+        <p class="muted" style="margin-top: 8px; line-height: 1.7">下表记录事件发生时的状态和端口，切换端口后历史内容仍保留。开发板恢复在线后，对应离线告警会自动标记已处理。每 5 秒刷新列表。</p>
+      </div>
       <div class="toolbar">
         <label class="field">
           显示
@@ -53,6 +84,7 @@ onMounted(load)
         </label>
         <button class="btn" :disabled="loading" @click="load">刷新</button>
       </div>
+      <p v-if="error" class="banner-error" role="alert" style="margin-bottom: 12px">{{ error }}</p>
 
       <div class="table-wrap">
         <table>

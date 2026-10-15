@@ -1,0 +1,11 @@
+menuconfig APP_ACCESS_FACE
+    bool "Smart access board-camera feature demo"
+    depends on BOARD_EDU_RISCV64_EVB && ADD_XIZI_FEATURES
+    depends on !SEPARATE_COMPILE
+    select APP_ACCESS_CONTROL
+    select BSP_USING_CAMERA
+    select BSP_USING_LCD
+    select BSP_USING_DMA
+    select BSP_USING_KPU
+    select DVP_INTERRUPT_ENABLE
+    default n

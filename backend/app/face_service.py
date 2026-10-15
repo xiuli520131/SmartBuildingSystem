@@ -195,7 +195,9 @@ class FaceService:
                 "message": f"检测到 {len(faces)} 张人脸，不执行开门",
                 "faces": len(faces),
             }
-        if self.model is None:
+        with self._lock:
+            model = self.model
+        if model is None:
             return {
                 "recognition": "unknown",
                 "message": "模型尚未训练，请先注册并训练",
@@ -204,7 +206,7 @@ class FaceService:
             }
         box = max(faces, key=lambda b: b[2] * b[3])
         face = self.preprocess_face(img, box)
-        label, conf = self.model.predict(face)
+        label, conf = model.predict(face)
         user = db.fetch_one(
             "SELECT id, user_no, name, enabled, recognition_threshold FROM users WHERE id=?",
             (int(label),),
@@ -214,6 +216,7 @@ class FaceService:
             return {
                 "recognition": "recognized",
                 "confidence": float(conf),
+                "distance": float(conf),
                 "user": user,
                 "faces": 1,
                 "message": f"识别为 {user['name']}（距离 {conf:.1f} ≤ 阈值 {threshold:.1f}）",
@@ -222,6 +225,7 @@ class FaceService:
         return {
             "recognition": "unknown",
             "confidence": float(conf),
+            "distance": float(conf),
             "user": None,
             "faces": 1,
             "message": f"未知人员（距离 {conf:.1f} > 阈值 {threshold:.1f}）",
@@ -267,25 +271,35 @@ class FaceService:
                         }
                     )
                 else:
-                    # 逐张留一：用其余全部样本训练，预测被留出的样本
+                    # Genuine: held-out own photo vs own templates.
+                    # Impostor: held-out OTHER identity vs this person's templates.
                     own_dist: list[float] = []
                     cross_dist: list[float] = []
                     others = [s for uid, ss in by_user.items() for s in ss]
-                    for held in samples:
+                    for held in others:
                         train = [s for s in others if s["id"] != held["id"]]
-                        imgs = [cv2.imread(s["path"], cv2.IMREAD_GRAYSCALE) for s in train]
-                        imgs = [cv2.resize(i, (_FACE_W, _FACE_H)) for i in imgs if i is not None]
+                        imgs, lab = [], []
+                        for sample in train:
+                            loaded = cv2.imread(sample["path"], cv2.IMREAD_GRAYSCALE)
+                            if loaded is not None:
+                                imgs.append(cv2.resize(loaded, (_FACE_W, _FACE_H)))
+                                lab.append(int(sample["user_id"]))
                         if not imgs:
                             continue
-                        lab = [int(s["user_id"]) for s in train[: len(imgs)]]
                         m = cv2.face.LBPHFaceRecognizer_create()
                         m.train(imgs, np.array(lab, dtype=np.int32))
                         test = cv2.imread(held["path"], cv2.IMREAD_GRAYSCALE)
                         if test is None:
                             continue
                         test = cv2.resize(test, (_FACE_W, _FACE_H))
-                        pred_label, dist = m.predict(test)
-                        if int(pred_label) == u["id"]:
+                        query_model = cv2.face.LBPHFaceRecognizer_create()
+                        query_model.train([test], np.array([0], dtype=np.int32))
+                        query = query_model.getHistograms()[0]
+                        own_templates = [h for label, h in zip(lab, m.getHistograms()) if label == u["id"]]
+                        if not own_templates:
+                            continue
+                        dist = min(cv2.compareHist(h, query, cv2.HISTCMP_CHISQR_ALT) for h in own_templates)
+                        if held["user_id"] == u["id"]:
                             own_dist.append(float(dist))
                         else:
                             cross_dist.append(float(dist))
@@ -313,7 +327,7 @@ class FaceService:
                                 "own_max": round(own_max, 2),
                                 "own_mean": round(sum(own_dist) / len(own_dist), 2),
                                 "cross_min": round(cross_min, 2) if cross_min else None,
-                                "note": "留一法校准",
+                                "note": "留一法初步校准，仍需独立现场验证",
                             }
                         )
                 db.execute(

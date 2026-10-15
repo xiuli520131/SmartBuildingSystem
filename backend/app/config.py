@@ -36,6 +36,8 @@ def _env_int(name: str, default: int) -> int:
 
 
 class Settings:
+    # board: hardware features only; legacy explicitly enables the old browser demo.
+    access_input: str = _env_str("SMART_ACCESS_INPUT", "board").lower()
     # ---- 目录与文件 ----
     data_dir: Path = Path(_env_str("SMART_ACCESS_DATA", str(PROJECT_DIR / "data")))
     db_path: Path = data_dir / "smart_access.db"
@@ -55,6 +57,11 @@ class Settings:
     bridge_mode: str = _env_str("SMART_ACCESS_BRIDGE_MODE", "mock").lower()
     serial_port: str = _env_str("SMART_ACCESS_SERIAL_PORT", "COM9")
     serial_baud: int = _env_int("SMART_ACCESS_SERIAL_BAUD", 115200)
+    # Give the course board time to receive/echo each command character.
+    # Set to 0 to reproduce the previous whole-line burst for comparison.
+    serial_char_interval: float = min(0.05, max(
+        0.0, _env_float("SMART_ACCESS_SERIAL_CHAR_INTERVAL", 0.003)
+    ))
 
     # ---- 桥接行为 ----
     heartbeat_interval: float = _env_float("SMART_ACCESS_HEARTBEAT_INTERVAL", 5.0)

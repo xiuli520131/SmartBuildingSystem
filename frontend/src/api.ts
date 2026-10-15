@@ -11,6 +11,9 @@ import type {
   Permission,
   Summary,
   User,
+  EdgeStatus,
+  SampleRole,
+  ImageSampleResult,
 } from './types'
 
 const BASE = '' // 开发环境经 vite proxy 转发到 8000
@@ -36,6 +39,12 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 }
 
 export const api = {
+  edgeStatus: () => req<EdgeStatus>('GET', '/api/edge/status'),
+  edgeEnroll: (user_id: number | null, role: 'train' | 'validation' | 'unknown') =>
+    req<{ ok: boolean; message: string; request_id: string }>('POST', '/api/edge/enroll', { user_id, role }),
+  edgeCalibrate: () => req<{ ok: boolean; message: string; details: { name: string; enabled: boolean; message: string }[] }>('POST', '/api/edge/calibrate'),
+  edgeImageSample: (user_id: number | null, role: SampleRole, image: string, source: 'upload' | 'webcam') =>
+    req<ImageSampleResult>('POST', '/api/edge/image-sample', { user_id, role, image, source }),
   // 设备
   devices: () => req<Device[]>('GET', '/api/devices'),
   deviceStatus: () => req<BridgeStatus>('GET', '/api/devices/status'),
@@ -107,6 +116,7 @@ export const api = {
 // 共享响应式状态（简单 store，替代 pinia）
 export const store = reactive({
   status: null as BridgeStatus | null,
+  edge: null as EdgeStatus | null,
   summary: null as Summary | null,
   events: [] as AccessEvent[],
   alerts: [] as Alert[],
@@ -119,16 +129,18 @@ export const store = reactive({
 
 export async function refreshStatus() {
   try {
-    const [status, summary, events, alerts] = await Promise.all([
+    const [status, summary, events, alerts, edge] = await Promise.all([
       api.deviceStatus(),
       api.summary(),
       api.events({ limit: 10 }),
       api.alerts({ limit: 8 }),
+      api.edgeStatus(),
     ])
     store.status = status
     store.summary = summary
     store.events = events
     store.alerts = alerts
+    store.edge = edge
     store.error = ''
   } catch (e) {
     store.error = e instanceof Error ? e.message : String(e)

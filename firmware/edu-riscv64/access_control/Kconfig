@@ -1,0 +1,10 @@
+menuconfig APP_ACCESS_CONTROL
+    bool "Enable smart access LED demo"
+    depends on ADD_XIZI_FEATURES && BOARD_EDU_RISCV64_EVB && !SEPARATE_COMPILE
+    select BSP_USING_GPIO
+    select RESOURCES_PIN
+    select TOOL_SHELL
+    default n
+    help
+        Simulate a door lock using IO29. Disable USER_TEST_GPIO first.
+        Commands: Door ping/status/allow/deny [12-character hex ID].

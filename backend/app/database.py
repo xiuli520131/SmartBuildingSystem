@@ -85,6 +85,24 @@ CREATE INDEX IF NOT EXISTS idx_events_req ON access_events(request_id);
 CREATE INDEX IF NOT EXISTS idx_events_user ON access_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_alerts_resolved ON alerts(resolved);
 CREATE INDEX IF NOT EXISTS idx_perms_user ON permissions(user_id);
+
+CREATE TABLE IF NOT EXISTS edge_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK(role IN ('train','validation','unknown')),
+    algorithm TEXT NOT NULL,
+    data BLOB NOT NULL,
+    source TEXT NOT NULL DEFAULT 'board',
+    image_sha256 TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE TABLE IF NOT EXISTS edge_thresholds (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    algorithm TEXT NOT NULL,
+    threshold REAL NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 0,
+    calibrated_at TEXT NOT NULL
+);
 """
 
 
@@ -97,6 +115,7 @@ def get_conn() -> Iterator[sqlite3.Connection]:
     """每次调用获取独立连接；写操作在全局锁内串行，读操作并发安全。"""
     with _db_lock:
         conn = sqlite3.connect(str(settings.db_path), check_same_thread=False)
+        conn.execute("PRAGMA foreign_keys=ON")
         conn.row_factory = sqlite3.Row
         try:
             yield conn
@@ -108,6 +127,12 @@ def init_db() -> None:
     settings.ensure_dirs()
     with get_conn() as conn:
         conn.executescript(SCHEMA)
+        # Existing databases retain all samples and their current calibration.
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(edge_samples)")}
+        if "source" not in columns:
+            conn.execute("ALTER TABLE edge_samples ADD COLUMN source TEXT NOT NULL DEFAULT 'board'")
+        if "image_sha256" not in columns:
+            conn.execute("ALTER TABLE edge_samples ADD COLUMN image_sha256 TEXT")
         # 播种默认门禁设备
         cur = conn.execute(
             "SELECT id FROM devices WHERE device_no = ?", (settings.default_device_no,)

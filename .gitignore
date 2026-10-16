@@ -1,0 +1,31 @@
+# Python / local environment
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+backend/.env
+
+# Frontend generated files
+frontend/node_modules/
+frontend/dist/
+
+# Local IDE state
+.vs/
+.idea/
+
+# Runtime data, enrollment images/features and logs
+data/
+demo-data/
+backend/tests/data/
+backend/tests/assets/
+backend/tests/smoke_output.txt
+*.log
+*.jsonl
+
+# School model generated during Ubuntu installation and build artifacts
+artifacts/
+firmware/edu-riscv64/access_face/face_model_data.c
+*.bin
+*.elf
+*.map
+*.o

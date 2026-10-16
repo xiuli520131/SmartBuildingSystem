@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, reactive, ref } from 'vue'
-import { api, cameraFrameToBase64, formatDT, refreshFace, refreshUsers, store } from '../api'
+import { onMounted, reactive, ref } from 'vue'
+import { api, formatDT, refreshFace, refreshUsers, refreshStatus, store } from '../api'
+import FaceEnrollment from '../components/FaceEnrollment.vue'
 import type { CalibrateResult, Permission, User } from '../types'
 
 // ---------- 用户列表 ----------
@@ -56,63 +57,22 @@ async function removeUser(u: User) {
 
 // ---------- 人脸采集 ----------
 const captureUser = ref<User | null>(null)
-const captureVideo = ref<HTMLVideoElement>()
-let captureStream: MediaStream | null = null
-const collecting = ref(false)
-const shotResult = ref('')
-const shotOk = ref(false)
-const lastShot = ref<{ count?: number } | null>(null)
+const boardMode = () => store.edge?.input_mode !== 'legacy'
 
 async function openCapture(u: User) {
   captureUser.value = u
-  shotResult.value = ''
-  lastShot.value = null
-  try {
-    captureStream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 640 }, height: { ideal: 480 } },
-      audio: false,
-    })
-    await new Promise((r) => setTimeout(r, 50))
-    if (captureVideo.value) {
-      captureVideo.value.srcObject = captureStream
-      await captureVideo.value.play()
-    }
-  } catch (e) {
-    shotResult.value = '无法打开摄像头：' + (e instanceof Error ? e.message : String(e))
-    shotOk.value = false
-  }
-}
-
-async function takeShot() {
-  if (!captureVideo.value || !captureVideo.value.videoWidth || !captureUser.value) return
-  if (collecting.value) return
-  collecting.value = true
-  shotResult.value = '提交中…'
-  shotOk.value = false
-  try {
-    const b64 = cameraFrameToBase64(captureVideo.value)
-    const r = await api.faceSample(captureUser.value.id, b64)
-    shotOk.value = r.ok
-    shotResult.value = r.message
-    lastShot.value = { count: r.sample_count }
-    if (r.ok) await refreshFace()
-  } catch (e) {
-    shotOk.value = false
-    shotResult.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    collecting.value = false
-  }
+  await refreshStatus()
 }
 
 function closeCapture() {
-  if (captureStream) {
-    captureStream.getTracks().forEach((t) => t.stop())
-    captureStream = null
-  }
   captureUser.value = null
 }
 
 async function trainNow() {
+  if (boardMode()) {
+    notify('板端模式保存特征模板，无需训练旧照片模型；录入训练和验证样本后进行阈值校准')
+    return
+  }
   try {
     const r = await api.faceTrain()
     notify(r.message)
@@ -125,6 +85,14 @@ async function trainNow() {
 const calibrateResult = ref<CalibrateResult | null>(null)
 
 async function calibrateNow() {
+  if (boardMode()) {
+    try {
+      const r = await api.edgeCalibrate()
+      notify(r.details.map(d => `${d.name}：${d.message}`).join('；') || r.message)
+      await refreshStatus()
+    } catch (e) { notify(e instanceof Error ? e.message : String(e)) }
+    return
+  }
   try {
     calibrateResult.value = await api.faceCalibrate()
     await refreshFace()
@@ -195,9 +163,6 @@ onMounted(() => {
   api.devices().then((d) => (store.devices = d)).catch(() => {})
 })
 
-onUnmounted(() => {
-  closeCapture()
-})
 </script>
 
 <template>
@@ -222,7 +187,7 @@ onUnmounted(() => {
     <div class="panel">
       <h2>
         人员列表
-        <span class="sub">注册后采集 ≥2 张人脸样本即可训练识别模型</span>
+        <span class="sub">{{ boardMode() ? '板端模式：每人至少 3 个训练特征与 3 个独立验证特征' : '旧照片模型：注册后采集 ≥2 张样本' }}</span>
       </h2>
       <div class="table-wrap">
         <table>
@@ -245,8 +210,8 @@ onUnmounted(() => {
                   {{ u.enabled ? '启用' : '停用' }}
                 </span>
               </td>
-              <td>{{ u.sample_count }}</td>
-              <td class="mono">{{ u.recognition_threshold?.toFixed(1) ?? '—' }}</td>
+              <td>{{ boardMode() ? `${store.edge?.users.find(e => e.user_id === u.id)?.train_count ?? 0} 训练 / ${store.edge?.users.find(e => e.user_id === u.id)?.validation_count ?? 0} 验证` : u.sample_count }}</td>
+              <td class="mono">{{ boardMode() ? (store.edge?.users.find(e => e.user_id === u.id)?.threshold?.toFixed(1) ?? '未校准') : (u.recognition_threshold?.toFixed(1) ?? '—') }}</td>
               <td>
                 <button class="btn small" @click="openCapture(u)">采集人脸</button>
                 <button class="btn small" @click="openPerms(u)">权限</button>
@@ -264,9 +229,9 @@ onUnmounted(() => {
       </div>
 
       <div class="toolbar" style="margin-top: 14px; margin-bottom: 0">
-        <button class="btn" @click="trainNow">训练模型</button>
+        <button v-if="!boardMode()" class="btn" @click="trainNow">训练模型</button>
         <button class="btn" @click="calibrateNow">阈值校准</button>
-        <span class="muted" v-if="store.face">
+        <span class="muted" v-if="store.face && !boardMode()">
           模型版本 {{ store.face.model_version || '未训练' }} · 样本 {{ store.face.total_samples }} 张 ·
           默认阈值 {{ store.face.default_threshold }}
         </span>
@@ -309,33 +274,7 @@ onUnmounted(() => {
     </div>
 
     <!-- 人脸采集弹窗 -->
-    <div v-if="captureUser" class="modal-mask" @click.self="closeCapture">
-      <div class="modal">
-        <span class="close" @click="closeCapture">×</span>
-        <h3>采集人脸样本 — {{ captureUser.name }}（{{ captureUser.user_no }}）</h3>
-        <div class="video-box" style="aspect-ratio: 4 / 3">
-          <video v-show="!shotResult || shotOk" ref="captureVideo" muted playsinline></video>
-          <div v-if="shotResult && !shotOk" class="placeholder" style="padding: 16px; text-align: center">
-            {{ shotResult }}
-          </div>
-        </div>
-        <div class="toolbar" style="margin-top: 12px; margin-bottom: 0">
-          <button class="btn primary" @click="takeShot" :disabled="collecting">
-            采集当前帧
-          </button>
-          <span v-if="lastShot" class="muted">该人员现有 {{ lastShot.count }} 张样本</span>
-        </div>
-        <div class="muted" style="margin-top: 10px; font-size: 12px; line-height: 1.7">
-          建议采集 5–10 张，轻微转动头部或改变光照。每帧必须<b>恰好检测到一张人脸</b>才会保存；
-          采集 ≥2 张后模型自动增量训练。采集完成后点击下方「训练 / 阈值校准」。
-        </div>
-        <div class="toolbar" style="margin-top: 12px; margin-bottom: 0">
-          <button class="btn" @click="trainNow">训练模型</button>
-          <button class="btn" @click="calibrateNow">阈值校准</button>
-          <button class="btn primary" @click="closeCapture">完成</button>
-        </div>
-      </div>
-    </div>
+    <FaceEnrollment v-if="captureUser" :key="captureUser.id" :user="captureUser" :board-mode="boardMode()" @close="closeCapture" />
 
     <!-- 权限配置弹窗 -->
     <div v-if="permUser" class="modal-mask" @click.self="permUser = null">

@@ -176,7 +176,25 @@ onUnmounted(() => {
   <div class="page">
     <div class="cols-2 grid">
       <!-- 左：摄像头与识别结果 -->
-      <div class="panel">
+      <div v-if="store.edge?.input_mode !== 'legacy'" class="panel">
+        <h2>板载摄像头识别 <span class="sub">开发板提取特征 · 电脑匹配身份与权限</span></h2>
+        <div class="result-banner">
+          <span class="badge" :class="store.edge?.ready ? 'green' : 'amber'">
+            {{ store.edge?.ready ? '板端特征模块就绪' : '等待板端特征固件连接' }}
+          </span>
+          <p>来访人员面对开发板摄像头。网页接收板端结果，电脑摄像头不参与通行。</p>
+          <p>摄像头{{ store.status?.online ? '状态' : '最近上报状态（当前离线）' }}：{{ store.edge?.camera_state || '等待连接' }}</p>
+          <p v-if="store.edge?.last_result">{{ store.edge.last_result.message }}</p>
+          <p v-if="store.edge?.last_result?.recognized_name">人员：{{ store.edge.last_result.recognized_name }}</p>
+          <p v-if="store.edge?.last_result?.distance != null">匹配距离：{{ store.edge.last_result.distance.toFixed(1) }}</p>
+          <p v-if="store.edge?.last_result?.execution">执行：{{ EXEC_LABEL[store.edge.last_result.execution] || store.edge.last_result.execution }}</p>
+          <p v-if="store.edge?.transport_error" class="banner-error">{{ store.edge.transport_error }}</p>
+        </div>
+        <div class="muted" style="margin-top: 16px">
+          当前仅使用 LED 模拟解锁。人员录入请前往「人员与权限」。板载视频预览暂未提供。
+        </div>
+      </div>
+      <div v-else class="panel">
         <h2>
           摄像头识别
           <span class="sub">浏览器 getUserMedia · 每 1.5 秒提交一帧</span>
@@ -263,6 +281,10 @@ onUnmounted(() => {
                 <td>最后心跳</td>
                 <td>{{ store.status.last_heartbeat || '—' }}</td>
               </tr>
+              <tr v-if="store.status.last_error">
+                <td>串口诊断</td>
+                <td style="color: var(--amber); overflow-wrap: anywhere">{{ store.status.last_error }}</td>
+              </tr>
             </tbody>
           </table>
           <div v-else class="muted">加载中…</div>
@@ -306,7 +328,7 @@ onUnmounted(() => {
           </div>
           <div class="muted" style="margin-top: 10px; font-size: 12px">
             未处理告警 {{ store.summary?.unresolved_alerts ?? 0 }} 条 ·
-            已注册人员 {{ store.summary?.total_users ?? 0 }} 人 · 样本 {{ store.summary?.total_samples ?? 0 }} 张
+            已注册人员 {{ store.summary?.total_users ?? 0 }} 人 · 样本 {{ store.edge?.input_mode !== 'legacy' ? (store.edge?.users.reduce((sum, u) => sum + u.train_count + u.validation_count, 0) ?? 0) + (store.edge?.unknown_count ?? 0) : store.summary?.total_samples ?? 0 }} 份
           </div>
         </div>
       </div>

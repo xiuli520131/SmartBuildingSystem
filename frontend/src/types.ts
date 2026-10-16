@@ -45,6 +45,9 @@ export interface BridgeStatus {
   last_heartbeat: string | null
   line_ending: string
   last_error?: string
+  feature_error?: string
+  face_running?: boolean
+  face_health?: string
 }
 
 export interface FrameResult {
@@ -133,4 +136,33 @@ export interface CalibrateResult {
   message: string
   details: CalibrateDetail[]
   summary: { users_calibrated: number; cross_risk_users: number; model_version: string | null } | null
+}
+
+export interface EdgeStatus {
+  camera_state: string
+  algorithm: string
+  input_mode: string
+  ready: boolean
+  session: string | null
+  feature_bytes: number
+  transport_error: string
+  unknown_count: number
+  source_counts?: { user_id: number | null; source: string; role: string; count: number }[]
+  last_result: { message: string; request_id: string; recognized_name?: string; authorization?: string; execution?: string; distance?: number; kind?: string } | null
+  enrollment: { request_id: string; user_id: number | null; role: string; remaining_seconds: number } | null
+  users: { user_id: number; name: string; train_count: number; validation_count: number; calibrated: boolean; threshold: number | null }[]
+}
+
+export type SampleRole = 'train' | 'validation' | 'unknown'
+export type EnrollmentSource = 'board' | 'upload' | 'webcam'
+export interface ImageSampleResult {
+  ok: boolean
+  message: string
+  sample_id?: number
+  sample_count?: number
+  source: 'upload' | 'webcam'
+  role: SampleRole
+  face_box: { x: number; y: number; w: number; h: number }
+  image_width: number
+  image_height: number
 }

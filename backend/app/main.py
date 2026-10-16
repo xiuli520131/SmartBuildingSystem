@@ -21,6 +21,10 @@ from .config import settings
 from .face_service import FaceService
 from .serial_bridge import SerialBridge
 from .state import app_state
+from .feature_service import FeatureService
+from .edge_access_service import EdgeAccessService
+from .image_enrollment import ImageEnrollmentService
+from .api import edge
 
 logger = logging.getLogger("smart-access")
 
@@ -40,6 +44,11 @@ async def lifespan(_app: FastAPI):
     app_state.access = AccessService(app_state.face, app_state.bridge)
     app_state.bridge.on_board_frame = app_state.access.on_board_frame
     app_state.bridge.on_online_change = app_state.access.on_online_change
+    app_state.edge = EdgeAccessService(FeatureService(), app_state.bridge, app_state.access)
+    app_state.image_enrollment = ImageEnrollmentService(app_state.edge.features)
+    app_state.bridge.on_feature = app_state.edge.enqueue
+    app_state.bridge.on_feature_cancel = app_state.edge.cancel
+    app_state.edge.start()
 
     # 初始设备状态写入数据库
     if app_state.device_id:
@@ -54,6 +63,7 @@ async def lifespan(_app: FastAPI):
         app_state.bridge.port,
     )
     yield
+    app_state.edge.stop()
     app_state.bridge.stop()
 
 
@@ -72,6 +82,7 @@ app.include_router(devices.router)
 app.include_router(faces.router)
 app.include_router(access.router)
 app.include_router(alerts.router)
+app.include_router(edge.router)
 
 
 @app.get("/api/health")

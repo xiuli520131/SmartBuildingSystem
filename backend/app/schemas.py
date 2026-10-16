@@ -103,8 +103,13 @@ class BridgeStatusOut(BaseModel):
     lock_state: str
     port: Optional[str] = None
     baud: Optional[int] = None
+    serial_char_interval_ms: float = 0.0
     last_heartbeat: Optional[str] = None
     line_ending: str = ""
+    last_error: str = ""
+    feature_error: str = ""
+    face_running: bool = False
+    face_health: str = "UNCONNECTED"
 
 
 # ---------- 人脸 ----------

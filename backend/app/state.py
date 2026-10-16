@@ -12,6 +12,8 @@ class AppState:
         self.face = None  # FaceService
         self.bridge = None  # SerialBridge
         self.access = None  # AccessService
+        self.edge = None
+        self.image_enrollment = None
         self.device_id: Optional[int] = None
 
 

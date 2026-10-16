@@ -17,6 +17,9 @@ router = APIRouter(prefix="/api/access", tags=["access"])
 
 @router.post("/frame")
 def process_frame(body: FrameIn) -> dict:
+    if settings.access_input != "legacy":
+        return {"ok": False, "message": "当前使用板载摄像头，浏览器图像不会触发开锁",
+                "recognition": "error", "authorization": "block", "auth_reason": "板端输入模式"}
     if len(body.image) > settings.max_frame_bytes:
         return {
             "ok": False,

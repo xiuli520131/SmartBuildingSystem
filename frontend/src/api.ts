@@ -94,6 +94,8 @@ export const api = {
   // 通行
   processFrame: (image: string, device_no = 'D001') =>
     req<FrameResult>('POST', '/api/access/frame', { image, device_no }),
+  webcamFrame: (image: string, device_no = 'D001') =>
+    req<FrameResult>('POST', '/api/access/webcam-frame', { image, device_no }),
   events: (params: { limit?: number; authorization?: string; recognition?: string } = {}) => {
     const q = new URLSearchParams()
     if (params.limit) q.set('limit', String(params.limit))

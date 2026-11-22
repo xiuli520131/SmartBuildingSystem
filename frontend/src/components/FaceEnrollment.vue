@@ -194,7 +194,7 @@ async function save() {
         }
       }
       failed.value = saved < queue.length
-      status.value = `已保存 ${saved} / ${queue.length} 张。${saved < queue.length ? '未保存原因见照片列表；更换照片后可重新提交。' : '请继续录入独立验证样本。'}`
+      status.value = `已保存 ${saved} / ${queue.length} 张。${saved < queue.length ? '未保存原因见照片列表；更换照片后可重新提交。' : '训练样本满 3 份后可进行阈值校准；独立验证样本为可选项。'}`
     }
     if (!disposed) {
       // Saving is already complete even if the following list refresh fails.

@@ -25,9 +25,11 @@ def _now() -> str:
 
 
 class AccessService:
-    def __init__(self, face_service: FaceService, bridge: SerialBridge) -> None:
+    def __init__(self, face_service: FaceService, bridge: SerialBridge,
+                 image_enrollment=None) -> None:
         self.face = face_service
         self.bridge = bridge
+        self.image_enrollment = image_enrollment
         self._lock = threading.RLock()
         self._last_allow: dict[int, float] = {}
         self._last_deny: dict[int, float] = {}
@@ -82,20 +84,8 @@ class AccessService:
             db.execute("UPDATE devices SET lock_state=? WHERE id=?", (state, device_id))
 
     # ---------- 主决策 ----------
-    def process_frame(self, image_b64: str, device_no: str = "D001") -> dict[str, Any]:
-        device = db.fetch_one("SELECT * FROM devices WHERE device_no=?", (device_no,))
-        if device is None:
-            return {
-                "ok": False,
-                "message": f"设备 {device_no} 不存在",
-                "recognition": "error",
-                "authorization": "block",
-                "auth_reason": "设备不存在",
-            }
-        dev_id = device["id"]
-
-        rec = self.face.recognize(image_b64)
-        result: dict[str, Any] = {
+    def _initial_result(self, rec: dict) -> dict[str, Any]:
+        return {
             "ok": True,
             "message": rec["message"],
             "recognition": rec["recognition"],
@@ -109,6 +99,42 @@ class AccessService:
             "raw": None,
         }
 
+    @staticmethod
+    def _device_missing(device_no: str) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "message": f"设备 {device_no} 不存在",
+            "recognition": "error",
+            "authorization": "block",
+            "auth_reason": "设备不存在",
+        }
+
+    def process_frame(self, image_b64: str, device_no: str = "D001") -> dict[str, Any]:
+        device = db.fetch_one("SELECT * FROM devices WHERE device_no=?", (device_no,))
+        if device is None:
+            return self._device_missing(device_no)
+        rec = self.face.recognize(image_b64)
+        result = self._initial_result(rec)
+        return self._decide(device["id"], rec, result, source="legacy")
+
+    def process_webcam_frame(self, image_b64: str, device_no: str = "D001") -> dict[str, Any]:
+        """电脑摄像头实时识别：帧在本地提 lbph4-v1 特征，复用板端特征模板。"""
+        device = db.fetch_one("SELECT * FROM devices WHERE device_no=?", (device_no,))
+        if device is None:
+            return self._device_missing(device_no)
+        if self.image_enrollment is None:
+            return {"ok": False, "message": "电脑摄像头识别未装配", "recognition": "error",
+                    "authorization": "block", "auth_reason": "识别服务不可用"}
+        rec = self.image_enrollment.recognize(image_b64)
+        result = self._initial_result(rec)
+        return self._decide(device["id"], rec, result, source="webcam")
+
+    def _decide(self, dev_id: int, rec: dict, result: dict[str, Any],
+                source: str = "legacy") -> dict[str, Any]:
+        # webcam 是电脑摄像头旁路识别：板端固件只信任其内部人脸决策(trusted)解锁，
+        # 外部串口下发 Door allow/deny 会被 FACE_REQUIRED 拒绝。因此旁路结果只在本地
+        # 记录与展示，不向板端发送开锁/拒锁指令，LED 与门锁由板端人脸闭环驱动。
+        local_bypass = source == "webcam"
         if rec["recognition"] == "no_face":
             result["authorization"] = "block"
             result["auth_reason"] = "未检测到人脸，不执行开门"
@@ -138,7 +164,10 @@ class AccessService:
         if not user["enabled"]:
             result["authorization"] = "deny"
             result["auth_reason"] = "人员已停用"
-            self._maybe_send_deny(user["id"], dev_id, result)
+            if not local_bypass:
+                self._maybe_send_deny(user["id"], dev_id, result)
+            else:
+                result["execution"] = "local"
             self._record_event(dev_id, user["id"], rec, result)
             return result
 
@@ -146,7 +175,18 @@ class AccessService:
         if perm is None:
             result["authorization"] = "deny"
             result["auth_reason"] = "该人员对此门无有效权限（时段外或未配置）"
-            self._maybe_send_deny(user["id"], dev_id, result)
+            if not local_bypass:
+                self._maybe_send_deny(user["id"], dev_id, result)
+            else:
+                result["execution"] = "local"
+            self._record_event(dev_id, user["id"], rec, result)
+            return result
+
+        if local_bypass:
+            result["authorization"] = "allow"
+            result["auth_reason"] = "电脑摄像头识别通过；本机模拟开锁，板端门锁与指示灯不动作"
+            result["execution"] = "local"
+            result["simulated_unlock"] = True
             self._record_event(dev_id, user["id"], rec, result)
             return result
 

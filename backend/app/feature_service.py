@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 
 from . import database as db
+from .config import settings
 
 ALGORITHM = "lbph4-v1"
 PREPROCESS = "gray160-nn-eq-v1"
@@ -90,7 +91,23 @@ class FeatureService:
             conn.execute("DELETE FROM edge_thresholds")
             conn.commit()
         label = {"train": "训练模板", "validation": "独立验证", "unknown": "陌生人验证"}[role]
-        return {"ok": True, "message": f"{label}已保存（现有 {count} 份），请完成独立验证并重新校准",
+        message = f"{label}已保存（现有 {count} 份），请完成独立验证并重新校准"
+        # 演示兜底模式：样本变动后自动重算阈值，避免每次录完都要手动点校准。
+        # 严格模式（relaxed_demo=False）下样本不满足严格条件时不会写入阈值，仍需手动校准。
+        if settings.relaxed_demo:
+            try:
+                cal = self.calibrate()
+                mine = None
+                if user_id is not None:
+                    mine = next((d for d in cal["details"] if d["user_id"] == user_id), None)
+                if mine and mine.get("enabled") and mine.get("threshold") is not None:
+                    message = f"{label}已保存（现有 {count} 份），已自动生成演示阈值，可直接刷脸"
+                elif user_id is not None:
+                    message = f"{label}已保存（现有 {count} 份），满 3 份训练特征后自动生成识别阈值"
+            except Exception:
+                # 自动校准失败不回滚已保存的样本，回退到手动校准提示。
+                pass
+        return {"ok": True, "message": message,
                 "sample_id": cursor.lastrowid, "sample_count": count, "source": source, "role": role}
 
     def _samples(self) -> list[dict]:
@@ -101,11 +118,29 @@ class FeatureService:
                 "users": db.fetch_all("""SELECT u.id AS user_id, u.name, u.user_no,
                     (SELECT COUNT(*) FROM edge_samples s WHERE s.user_id=u.id AND role='train') AS train_count,
                     (SELECT COUNT(*) FROM edge_samples s WHERE s.user_id=u.id AND role='validation') AS validation_count,
-                    t.threshold, t.enabled AS calibrated
+                    t.threshold, t.enabled AS calibrated, t.demo AS demo
                     FROM users u LEFT JOIN edge_thresholds t ON t.user_id=u.id ORDER BY u.id"""),
                 "source_counts": db.fetch_all("""SELECT user_id, source, role, COUNT(*) AS count
                     FROM edge_samples GROUP BY user_id, source, role"""),
                 "unknown_count": db.fetch_one("SELECT COUNT(*) AS c FROM edge_samples WHERE role='unknown'")["c"]}
+
+    def _demo_threshold(self, templates: list[np.ndarray], positives: list[np.ndarray]) -> tuple[float, str]:
+        """演示兜底阈值：样本/负样本不足时，按本人样本分布估算放宽上界。
+
+        仅用于毕设演示，不做独立验证与陌生人校验，误开门风险高于严格校准。
+        """
+        if positives:
+            own_max = max(min(distance(v, t) for t in templates) for v in positives)
+            basis = "独立验证样本"
+        elif len(templates) >= 2:
+            own_max = max(distance(a, b) for i, a in enumerate(templates) for b in templates[i + 1:])
+            basis = "训练样本互比"
+        else:
+            own_max = 0.0
+            basis = "单张训练样本"
+        threshold = own_max * settings.demo_threshold_factor + settings.demo_threshold_margin
+        note = f"演示兜底阈值（依据{basis}，未做独立验证/陌生人校验，误开门风险较高）：{threshold:.1f}"
+        return threshold, note
 
     def calibrate(self) -> dict:
         with self.lock:
@@ -122,9 +157,8 @@ class FeatureService:
                     entry = {"user_id": uid, "name": user["name"], "user_no": user["user_no"],
                              "train_count": len(templates), "validation_count": len(positives),
                              "negative_count": len(negatives), "enabled": False, "threshold": None}
-                    if len(templates) < MIN_TRAIN or len(positives) < MIN_VALIDATION or not negatives:
-                        entry["message"] = "至少 3 个训练、3 个独立验证特征，并需要其他身份/陌生人验证特征"
-                    else:
+                    strict_ready = len(templates) >= MIN_TRAIN and len(positives) >= MIN_VALIDATION and bool(negatives)
+                    if strict_ready:
                         own_max = max(min(distance(v, t) for t in templates) for v in positives)
                         cross_min = min(min(distance(v, t) for t in templates) for v in negatives)
                         entry.update(own_max=own_max, cross_min=cross_min)
@@ -133,8 +167,15 @@ class FeatureService:
                         else:
                             threshold = own_max + (cross_min - own_max) / 2
                             entry.update(enabled=True, threshold=threshold, message="校准完成；仍需未参与调参的最终测试")
-                            conn.execute("INSERT INTO edge_thresholds(user_id, algorithm, threshold, enabled, calibrated_at) VALUES (?,?,?,?,?)",
-                                         (uid, ALGORITHM, threshold, 1, datetime.now().isoformat()))
+                            conn.execute("INSERT INTO edge_thresholds(user_id, algorithm, threshold, enabled, demo, calibrated_at) VALUES (?,?,?,?,?,?)",
+                                         (uid, ALGORITHM, threshold, 1, 0, datetime.now().isoformat()))
+                    elif settings.relaxed_demo and len(templates) >= MIN_TRAIN:
+                        threshold, note = self._demo_threshold(templates, positives)
+                        entry.update(enabled=True, threshold=threshold, demo=True, message=note)
+                        conn.execute("INSERT INTO edge_thresholds(user_id, algorithm, threshold, enabled, demo, calibrated_at) VALUES (?,?,?,?,?,?)",
+                                     (uid, ALGORITHM, threshold, 1, 1, datetime.now().isoformat()))
+                    else:
+                        entry["message"] = "至少 3 个训练、3 个独立验证特征，并需要其他身份/陌生人验证特征"
                     details.append(entry)
                 conn.commit()
             return {"ok": True, "message": "特征阈值校准完成", "details": details}

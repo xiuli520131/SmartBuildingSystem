@@ -33,6 +33,22 @@ def process_frame(body: FrameIn) -> dict:
     return result
 
 
+@router.post("/webcam-frame")
+def process_webcam_frame(body: FrameIn) -> dict:
+    """电脑摄像头实时识别：本地提板端特征并比对 edge_samples 模板，不受 input_mode 限制。"""
+    if len(body.image) > settings.max_frame_bytes:
+        return {
+            "ok": False,
+            "message": "帧过大",
+            "recognition": "error",
+            "authorization": "block",
+            "auth_reason": "帧超过大小限制",
+        }
+    result = app_state.access.process_webcam_frame(body.image, body.device_no)
+    app_state.access.maybe_alert_repeated_failure()
+    return result
+
+
 def _event_out(row: dict) -> EventOut:
     user = None
     if row["user_id"]:

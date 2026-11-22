@@ -88,13 +88,13 @@ body {
 /* ---------- 布局 ---------- */
 .page {
   flex: 1;
-  padding: 20px 24px;
+  padding: 16px 24px;
   overflow: auto;
 }
 
 .grid {
   display: grid;
-  gap: 16px;
+  gap: 12px;
 }
 
 .cols-2 {
@@ -117,12 +117,12 @@ body {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px;
+  padding: 14px 16px;
 }
 
 .panel h2 {
   font-size: 15px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -211,7 +211,7 @@ body {
 
 .result-banner {
   margin-top: 12px;
-  padding: 12px 14px;
+  padding: 10px 12px;
   border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--panel-2);
@@ -354,7 +354,7 @@ table {
 th,
 td {
   text-align: left;
-  padding: 8px 10px;
+  padding: 7px 10px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -390,11 +390,11 @@ tbody tr:hover {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px 16px;
+  padding: 10px 12px;
 }
 
 .stat .num {
-  font-size: 26px;
+  font-size: 22px;
   font-weight: 700;
 }
 

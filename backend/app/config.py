@@ -35,6 +35,13 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 class Settings:
     # board: hardware features only; legacy explicitly enables the old browser demo.
     access_input: str = _env_str("SMART_ACCESS_INPUT", "board").lower()
@@ -75,6 +82,11 @@ class Settings:
     face_size: tuple[int, int] = (160, 160)
     default_threshold: float = _env_float("SMART_ACCESS_DEFAULT_THRESHOLD", 80.0)
     calibrate_margin: float = 15.0  # 阈值校准：留一法最大距离 + 余量
+    # 演示兜底：样本/负样本不满足严格校准时，是否用本人样本分布生成放宽阈值。
+    # 设 SMART_ACCESS_DEMO_RELAXED=0 可关闭，回到必须 3 训练 + 3 验证 + 负样本的严格模式。
+    relaxed_demo: bool = _env_bool("SMART_ACCESS_DEMO_RELAXED", True)
+    demo_threshold_factor: float = _env_float("SMART_ACCESS_DEMO_THRESHOLD_FACTOR", 1.3)
+    demo_threshold_margin: float = _env_float("SMART_ACCESS_DEMO_THRESHOLD_MARGIN", 1.0)
     # 连续失败（未知/无权限）计数窗口，用于告警去重
     failure_window_seconds: float = 60.0
     failure_count_alert: int = 3

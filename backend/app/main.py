@@ -46,6 +46,7 @@ async def lifespan(_app: FastAPI):
     app_state.bridge.on_online_change = app_state.access.on_online_change
     app_state.edge = EdgeAccessService(FeatureService(), app_state.bridge, app_state.access)
     app_state.image_enrollment = ImageEnrollmentService(app_state.edge.features)
+    app_state.access.image_enrollment = app_state.image_enrollment
     app_state.bridge.on_feature = app_state.edge.enqueue
     app_state.bridge.on_feature_cancel = app_state.edge.cancel
     app_state.edge.start()

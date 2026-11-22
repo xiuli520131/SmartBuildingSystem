@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS edge_thresholds (
     algorithm TEXT NOT NULL,
     threshold REAL NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 0,
+    demo INTEGER NOT NULL DEFAULT 0,
     calibrated_at TEXT NOT NULL
 );
 """
@@ -133,6 +134,9 @@ def init_db() -> None:
             conn.execute("ALTER TABLE edge_samples ADD COLUMN source TEXT NOT NULL DEFAULT 'board'")
         if "image_sha256" not in columns:
             conn.execute("ALTER TABLE edge_samples ADD COLUMN image_sha256 TEXT")
+        threshold_cols = {row["name"] for row in conn.execute("PRAGMA table_info(edge_thresholds)")}
+        if "demo" not in threshold_cols:
+            conn.execute("ALTER TABLE edge_thresholds ADD COLUMN demo INTEGER NOT NULL DEFAULT 0")
         # 播种默认门禁设备
         cur = conn.execute(
             "SELECT id FROM devices WHERE device_no = ?", (settings.default_device_no,)

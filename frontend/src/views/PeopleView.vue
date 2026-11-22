@@ -70,7 +70,7 @@ function closeCapture() {
 
 async function trainNow() {
   if (boardMode()) {
-    notify('板端模式保存特征模板，无需训练旧照片模型；录入训练和验证样本后进行阈值校准')
+    notify('板端模式保存特征模板，无需训练旧照片模型；录入 3 份训练样本后即可进行阈值校准')
     return
   }
   try {
@@ -187,7 +187,7 @@ onMounted(() => {
     <div class="panel">
       <h2>
         人员列表
-        <span class="sub">{{ boardMode() ? '板端模式：每人至少 3 个训练特征与 3 个独立验证特征' : '旧照片模型：注册后采集 ≥2 张样本' }}</span>
+        <span class="sub">{{ boardMode() ? '板端模式：每人至少 3 个训练特征即可（独立验证样本可选）' : '旧照片模型：注册后采集 ≥2 张样本' }}</span>
       </h2>
       <div class="table-wrap">
         <table>

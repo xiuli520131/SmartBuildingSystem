@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api, cameraFrameToBase64, refreshStatus, store } from '../api'
 import type { FrameResult } from '../types'
 
@@ -12,11 +12,55 @@ let stream: MediaStream | null = null
 let frameTimer: number | undefined
 let busy = false
 
+// 识别来源：board=开发板摄像头，webcam=Windows 摄像头（复用板端特征模板）
+const sourceMode = ref<'board' | 'webcam'>('board')
+const userPickedSource = ref(false)
+
+function switchSource(mode: 'board' | 'webcam') {
+  if (sourceMode.value === mode) return
+  userPickedSource.value = true
+  sourceMode.value = mode
+  if (mode === 'board') stopCamera()
+}
+
+// 后端默认链路回来后，未手动选择时按 input_mode 给初始来源
+watch(() => store.edge?.input_mode, (mode) => {
+  if (!userPickedSource.value) {
+    sourceMode.value = mode === 'legacy' ? 'webcam' : 'board'
+  }
+})
+
+// 板端样本与校准状态（用于 Windows 面板提示是否具备识别条件）
+const edgeSummary = computed(() => {
+  const e = store.edge
+  if (!e) return null
+  const train = e.users.reduce((sum, u) => sum + u.train_count, 0)
+  const validation = e.users.reduce((sum, u) => sum + u.validation_count, 0)
+  const calibrated = e.users.some((u) => u.calibrated && u.threshold != null)
+  const demoAny = e.users.some((u) => u.calibrated && u.demo)
+  return { train, validation, unknown: e.unknown_count ?? 0, calibrated, demoAny }
+})
+
 // 桥接模式切换
 const comPort = ref('COM9')
 const baud = ref(115200)
 const switching = ref(false)
 const switchError = ref('')
+
+// 电脑摄像头本机模拟开锁：板端固件只认其内部人脸决策，旁路结果不驱动硬件，
+// 仅在网页端给出 3 秒解锁反馈（对齐板端自动落锁时长）。
+const simUnlock = ref(false)
+let simTimer: number | undefined
+watch(lastResult, (res) => {
+  const isLocalAllow = res?.authorization === 'allow' && res?.execution === 'local'
+  if (simTimer) window.clearTimeout(simTimer)
+  if (isLocalAllow) {
+    simUnlock.value = true
+    simTimer = window.setTimeout(() => { simUnlock.value = false }, 3000)
+  } else {
+    simUnlock.value = false
+  }
+})
 
 async function switchToSerial() {
   switching.value = true
@@ -66,6 +110,7 @@ const EXEC_LABEL: Record<string, string> = {
   error: '板端错误',
   unconfirmed: '未确认',
   not_sent: '未发送',
+  local: '本机模拟开锁（板端不动作）',
 }
 
 async function startCamera() {
@@ -111,7 +156,7 @@ async function submitFrame() {
   submitting.value = true
   try {
     const b64 = cameraFrameToBase64(video.value)
-    lastResult.value = await api.processFrame(b64)
+    lastResult.value = await api.webcamFrame(b64)
   } catch (e) {
     lastResult.value = {
       ok: false,
@@ -139,7 +184,7 @@ async function captureOnce() {
   if (!video.value || !video.value.videoWidth) return
   busy = true
   try {
-    lastResult.value = await api.processFrame(cameraFrameToBase64(video.value))
+    lastResult.value = await api.webcamFrame(cameraFrameToBase64(video.value))
     refreshStatus()
   } catch (e) {
     lastResult.value = null
@@ -169,6 +214,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopCamera()
+  if (simTimer) window.clearTimeout(simTimer)
 })
 </script>
 
@@ -176,7 +222,17 @@ onUnmounted(() => {
   <div class="page">
     <div class="cols-2 grid">
       <!-- 左：摄像头与识别结果 -->
-      <div v-if="store.edge?.input_mode !== 'legacy'" class="panel">
+      <div class="source-bar" role="group" aria-label="选择识别摄像头">
+        <button type="button" class="btn" :class="{ primary: sourceMode === 'board' }"
+                :aria-pressed="sourceMode === 'board'" @click="switchSource('board')">
+          开发板摄像头
+        </button>
+        <button type="button" class="btn" :class="{ primary: sourceMode === 'webcam' }"
+                :aria-pressed="sourceMode === 'webcam'" @click="switchSource('webcam')">
+          Windows 摄像头
+        </button>
+      </div>
+      <div v-if="sourceMode === 'board'" class="panel">
         <h2>板载摄像头识别 <span class="sub">开发板提取特征 · 电脑匹配身份与权限</span></h2>
         <div class="result-banner">
           <span class="badge" :class="store.edge?.ready ? 'green' : 'amber'">
@@ -190,19 +246,21 @@ onUnmounted(() => {
           <p v-if="store.edge?.last_result?.execution">执行：{{ EXEC_LABEL[store.edge.last_result.execution] || store.edge.last_result.execution }}</p>
           <p v-if="store.edge?.transport_error" class="banner-error">{{ store.edge.transport_error }}</p>
         </div>
-        <div class="muted" style="margin-top: 16px">
+        <div class="muted" style="margin-top: 10px">
           当前仅使用 LED 模拟解锁。人员录入请前往「人员与权限」。板载视频预览暂未提供。
         </div>
       </div>
-      <div v-else class="panel">
+      <div v-else class="panel webcam-panel">
         <h2>
-          摄像头识别
-          <span class="sub">浏览器 getUserMedia · 每 1.5 秒提交一帧</span>
+          Windows 摄像头识别
+          <span class="sub">浏览器取帧 · 后端提取同款特征 · 复用板端模板比对</span>
         </h2>
-        <div class="video-box">
+        <div class="video-box" :class="{ idle: !cameraOn, unlocked: simUnlock }">
           <video v-show="cameraOn" ref="video" muted playsinline></video>
-          <div v-if="!cameraOn" class="placeholder">
-            <span>摄像头未开启</span>
+          <div v-if="!cameraOn" class="placeholder idle-placeholder">
+            <strong>摄像头未开启</strong>
+            <span>点击下方按钮允许浏览器使用摄像头，每 1.5 秒提交一帧进行识别</span>
+            <button type="button" class="btn primary" @click="startCamera">开启摄像头</button>
           </div>
           <div v-if="lastResult" class="video-overlay">
             <span class="badge" :class="recBadgeClass(lastResult.recognition)">
@@ -211,20 +269,32 @@ onUnmounted(() => {
             <span v-if="lastResult.recognized_name" class="badge blue">
               {{ lastResult.recognized_name }}（{{ lastResult.recognized_no }}）
             </span>
+            <span v-if="simUnlock" class="badge green">🔓 本机模拟开锁</span>
             <span v-if="lastResult.confidence !== null && lastResult.confidence !== undefined" class="muted">
               距离 {{ lastResult.confidence.toFixed(1) }}
             </span>
           </div>
         </div>
-        <div class="toolbar" style="margin-top: 12px; margin-bottom: 0">
-          <button v-if="!cameraOn" class="btn primary" @click="startCamera">开启摄像头</button>
-          <button v-else class="btn danger" @click="stopCamera">停止识别</button>
-          <button v-if="cameraOn" class="btn" @click="captureOnce" :disabled="busy">
+        <div v-if="cameraOn" class="toolbar" style="margin-top: 12px; margin-bottom: 0">
+          <button class="btn danger" @click="stopCamera">停止识别</button>
+          <button class="btn" :disabled="busy" @click="captureOnce">
             立即识别一次
           </button>
           <span v-if="submitting" class="muted">提交中…</span>
         </div>
         <div v-if="cameraError" class="banner-error">{{ cameraError }}</div>
+
+        <div class="calib-hint" :class="{ ready: edgeSummary?.calibrated }">
+          <span class="badge" :class="!edgeSummary?.calibrated ? 'amber' : edgeSummary?.demoAny ? 'amber' : 'green'">
+            {{ !edgeSummary?.calibrated ? '未校准' : edgeSummary?.demoAny ? '演示阈值' : '已校准' }}
+          </span>
+          <span class="muted">
+            训练 {{ edgeSummary?.train ?? 0 }} · 验证 {{ edgeSummary?.validation ?? 0 }} ·
+            陌生人 {{ edgeSummary?.unknown ?? 0 }}
+            <template v-if="!edgeSummary?.calibrated">；请在「人员与权限」完成阈值校准后再刷脸</template>
+            <template v-else-if="edgeSummary?.demoAny">；演示放宽阈值，未做陌生人校验，误开门风险较高</template>
+          </span>
+        </div>
 
         <div v-if="lastResult" class="result-banner">
           <div class="row">
@@ -242,6 +312,9 @@ onUnmounted(() => {
             </template>
             <span v-if="lastResult.raw" class="mono">{{ lastResult.raw }}</span>
           </div>
+        </div>
+        <div class="muted" style="margin-top: 12px; font-size: 12px">
+          电脑画面与开发板共用同一批特征模板；样本完成校准前会识别为未知人员。
         </div>
       </div>
 
@@ -377,3 +450,58 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.source-bar {
+  display: flex;
+  gap: 10px;
+}
+.source-bar .btn {
+  flex: 1;
+  justify-content: center;
+  padding: 8px 14px;
+}
+.video-box.idle {
+  aspect-ratio: auto;
+  height: 180px;
+}
+.video-box.unlocked {
+  box-shadow: 0 0 0 2px var(--green), 0 0 14px rgba(34, 197, 94, 0.5);
+  animation: sim-unlock-pulse 1.2s ease-in-out infinite;
+}
+@keyframes sim-unlock-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px var(--green), 0 0 10px rgba(34, 197, 94, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 3px var(--green), 0 0 22px rgba(34, 197, 94, 0.7);
+  }
+}
+.idle-placeholder {
+  flex-direction: column;
+  gap: 10px;
+  text-align: center;
+  padding: 16px;
+}
+.idle-placeholder span {
+  max-width: 360px;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+.result-banner p + p {
+  margin-top: 6px;
+}
+.calib-hint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  font-size: 13px;
+}
+</style>
